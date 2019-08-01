@@ -179,13 +179,5 @@ def multiFuseLoss(imglist,img,ui,ur,criterion):
     loss_all = loss_i+loss_r
     return loss_all
 
-def genWeights(num):
-    scales=[]
-    for i in range(num):
-        scale = ScaleLayer()
-        scale.cuda()
-        scales.append(scale)
-    return scales
-
 if __name__ == "__main__":
     main()
