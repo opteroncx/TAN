@@ -8,15 +8,15 @@ import torch.optim as optim
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from model6b import Net, L1_Charbonnier_loss,ScaleLayer
-from datasetD2K3 import DatasetFromHdf5
+from dataset import DatasetFromHdf5
 
 
 # Training settings
 parser = argparse.ArgumentParser(description="TAN")
-parser.add_argument("--batchSize", type=int, default=35, help="training batch size")
+parser.add_argument("--batchSize", type=int, default=60, help="training batch size")
 parser.add_argument("--nEpochs", type=int, default=100, help="number of epochs to train for")
 parser.add_argument("--lr", type=float, default=1e-4, help="Learning Rate. Default=1e-4")
-parser.add_argument("--step", type=int, default=10, help="Sets the learning rate to the initial LR decayed by momentum every n epochs, Default: n=10")
+parser.add_argument("--step", type=int, default=40, help="Sets the learning rate to the initial LR decayed by momentum every n epochs, Default: n=10")
 parser.add_argument("--cuda", action="store_true", help="Use cuda?")
 parser.add_argument("--resume", default="", type=str, help="Path to checkpoint (default: none)")
 parser.add_argument("--start-epoch", default=1, type=int, help="Manual epoch number (useful on restarts)")
@@ -44,7 +44,7 @@ def main():
     cudnn.benchmark = True
 
     print("===> Loading datasets")
-    train_set = DatasetFromHdf5("./data/ntire.h5")
+    train_set = DatasetFromHdf5("../../../data3/DIV2K/2x_4x/div2k.h5")
     training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=True)
 
     print("===> Building model")
@@ -54,13 +54,12 @@ def main():
 
     print("===> Setting GPU")
     if cuda:
-        model=nn.DataParallel(model,device_ids=[0,1,2,3,4]).cuda()
+        model=nn.DataParallel(model,device_ids=[0,1,2]).cuda()
         criterion = criterion.cuda()
     else:
         model = model.cpu()
 
     loadmultiGPU = True
-    # optionally resume from a checkpoint
     if opt.resume:
         if os.path.isfile(opt.resume):
             print("=> loading checkpoint '{}'".format(opt.resume))
@@ -72,9 +71,8 @@ def main():
                 from collections import OrderedDict
                 new_state_dict = OrderedDict()
                 for k, v in saved_state.items():
-                    namekey = 'module.'+k # remove `module.`
+                    namekey = 'module.'+k 
                     new_state_dict[namekey] = v
-                    # load params
                 model.load_state_dict(new_state_dict)
             else: 
                 model.load_state_dict(saved_state)
@@ -87,15 +85,10 @@ def main():
             print("=> loading model '{}'".format(opt.pretrained))
             weights = torch.load(opt.pretrained)
             pretrained_dict = weights['model'].state_dict()
-
             model_dict = model.state_dict()
-            # 1. filter out unnecessary keys
             pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-            # 2. overwrite entries in the existing state dict
             model_dict.update(pretrained_dict) 
-            # 3. load the new state dict
             model.load_state_dict(model_dict)
-            # model.load_state_dict(state)
         else:
             print("=> no model found at '{}'".format(opt.pretrained))
 
@@ -134,50 +127,38 @@ def train(training_data_loader, optimizer, model, criterion, epoch):
             label_x4 = label_x4.cuda()
             label_x8 = label_x8.cuda()
 
-        HR,ui,ur= model(label_x4)
-        # Supervise residual
-        # ui ---> upscale(LR)
-        # ur ---> pridected residual
-        SLoss = multiFuseLoss(HR, label_x8 ,ui,ur,criterion)
-
+        HR= model(label_x2)
+        SLoss = layerLoss(HR, label_x8 ,criterion)
         loss = SLoss
-
         optimizer.zero_grad()
-
         SLoss.backward()
-
         optimizer.step()
-
         if iteration%100 == 0:
             print("===> Epoch[{}]({}/{}): Loss: {:.10f}".format(epoch, iteration, len(training_data_loader), loss.item()))
 
 def save_checkpoint(model, epoch):
-    model_folder = "model_20180716_2x/"
+    model_folder = "checkpoints/"
     model_out_path = model_folder + "model_epoch_{}.pth".format(epoch)
     state = {"epoch": epoch ,"model": model}
     if not os.path.exists(model_folder):
         os.makedirs(model_folder)
-
     torch.save(state, model_out_path)
-
     print("Checkpoint saved to {}".format(model_out_path))
 
-def multiFuseLoss(imglist,img,ui,ur,criterion):
-    # ui ---> upscale(LR)
-    # ur ---> pridected residual
-    # img --> label img
-    lossi=0
-    lossr=0
-    true_res = img-ui
+def layerLoss(imglist,img,criterion):
+    loss=0
     for i in range(len(imglist)):
         l=criterion(imglist[i], img)
-        r=criterion(ur[i],true_res)
-        lossi+=l
-        lossr+=r
-    loss_i = lossi/len(imglist)    
-    loss_r = lossr/len(imglist)
-    loss_all = loss_i+loss_r
-    return loss_all
+        loss+=l
 
+    return loss/len(imglist)
+
+def genWeights(num):
+    scales=[]
+    for i in range(num):
+        scale = ScaleLayer()
+        scale.cuda()
+        scales.append(scale)
+    return scales
 if __name__ == "__main__":
     main()
