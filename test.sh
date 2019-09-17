@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=3 python3 test1se.py --model ./checkpoints/model.pth --cuda --scale 8 --testdir ./data/bsd100
